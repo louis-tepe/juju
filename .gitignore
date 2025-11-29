@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+
+# Data
+data/raw/
+data/processed/
+data/external/
+data/train_images/
+data/test_images/
+data/*.zip
+data/*.csv
+!data/sample_submission.csv
+
+# Hydra Outputs
+outputs/
+multirun/
+
+# IDE
+.vscode/
+.idea/
+
+# Mac
+.DS_Store
+
+# Model Weights
+*.h5
+*.keras
+*.pt
+*.pth
+
+# WandB
+wandb/
+
+# OOF
+oof.csv
+thresholds.json
+submission.csv

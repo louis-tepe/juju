@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - override /model: efficientnet
+  - override /train: default
+
+debug: true
+
+train:
+  epochs: 2
+  batch_size: 8
+
+data:
+  image_size: 128

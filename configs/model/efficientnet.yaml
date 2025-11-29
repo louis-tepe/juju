@@ -1,0 +1,7 @@
+name: "EfficientNetB0"
+backbone: "efficientnet_b0"
+pretrained: true
+num_classes: 5
+dropout: 0.2
+head: "gem" # Generalized Mean Pooling
+use_ordinal: false # If true, output 5 units (ordinal regression), else 1 (regression) or 5 (softmax)

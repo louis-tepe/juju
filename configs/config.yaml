@@ -1,0 +1,32 @@
+defaults:
+  - _self_
+  - model: efficientnet
+  - train: default
+  - experiment: null
+
+seed: 42
+debug: false
+
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  train_csv: "data/train.csv"
+  train_folds_csv: "data/train_folds.csv"
+  test_csv: "data/test.csv"
+  train_images: "data/train_images"
+  test_images: "data/test_images"
+  image_size: 256
+  batch_size: 32
+  num_workers: 4
+  use_ben_graham: true
+
+train:
+  fold: 0
+
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

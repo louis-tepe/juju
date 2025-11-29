@@ -1,0 +1,11 @@
+epochs: 15
+lr: 1e-4
+min_lr: 1e-6
+weight_decay: 1e-5
+optimizer: "adamw"
+scheduler: "cosine" # cosine, reduce_lr_on_plateau
+loss: "huber" # huber, kappa, cross_entropy
+accumulate_grad_batches: 1
+monitor: "val_kappa"
+mode: "max"
+patience: 5

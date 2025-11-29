@@ -1,0 +1,66 @@
+import tensorflow as tf
+import keras
+from src.models.layers import GeMPooling2D
+
+def get_backbone(name, input_shape, pretrained=True):
+    """
+    Factory to get the backbone model (excluding top).
+    """
+    weights = 'imagenet' if pretrained else None
+    
+    if 'efficientnet' in name:
+        # Dynamically map efficientnet names
+        if name == 'efficientnet_b0':
+            return keras.applications.EfficientNetB0(include_top=False, weights=weights, input_shape=input_shape)
+        elif name == 'efficientnet_b1':
+            return keras.applications.EfficientNetB1(include_top=False, weights=weights, input_shape=input_shape)
+        elif name == 'efficientnet_b2':
+            return keras.applications.EfficientNetB2(include_top=False, weights=weights, input_shape=input_shape)
+        elif name == 'efficientnet_b3':
+            return keras.applications.EfficientNetB3(include_top=False, weights=weights, input_shape=input_shape)
+        elif name == 'efficientnet_b4':
+            return keras.applications.EfficientNetB4(include_top=False, weights=weights, input_shape=input_shape)
+        elif name == 'efficientnet_b5':
+            return keras.applications.EfficientNetB5(include_top=False, weights=weights, input_shape=input_shape)
+    elif 'resnet50' in name:
+        return keras.applications.ResNet50(include_top=False, weights=weights, input_shape=input_shape)
+    elif 'inception_resnet_v2' in name:
+        return keras.applications.InceptionResNetV2(include_top=False, weights=weights, input_shape=input_shape)
+    
+    raise ValueError(f"Unknown backbone: {name}")
+
+def create_model(config):
+    """
+    Constructs the full model from config.
+    """
+    input_shape = (config.data.image_size, config.data.image_size, 3)
+    
+    backbone = get_backbone(config.model.backbone, input_shape, config.model.pretrained)
+    
+    inputs = keras.Input(shape=input_shape)
+    x = backbone(inputs)
+    
+    # Pooling
+    if config.model.head == 'gem':
+        x = GeMPooling2D()(x)
+    else:
+        x = keras.layers.GlobalAveragePooling2D()(x)
+        
+    # Dropout
+    if config.model.dropout > 0:
+        x = keras.layers.Dropout(config.model.dropout)(x)
+        
+    # Head
+    if config.model.use_ordinal:
+        # Ordinal Regression: 5 outputs with sigmoid (binary classification for each threshold >0, >1, >2, >3, >4) 
+        # Actually typically we output num_classes-1 for ordinal thresholds (0 vs >0 is implicit? No.)
+        # Common ordinal: Output k units. Target 2 is [1, 1, 0, 0, 0] (if 5 classes)
+        outputs = keras.layers.Dense(config.model.num_classes, activation='sigmoid', name='output')(x)
+    else:
+        # Standard Regression (1 output) or Classification
+        # Config implies 'regression' or 'classification' logic in loss. 
+        # Assuming Regression (1 output) as per plan "Sortie : 1 neurone (Régression)"
+        outputs = keras.layers.Dense(1, activation='linear', name='output')(x)
+        
+    model = keras.Model(inputs, outputs)
+    return model
