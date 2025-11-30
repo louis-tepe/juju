@@ -16,13 +16,12 @@ data:
   train_images: "data/train_images"
   test_images: "data/test_images"
   image_size: 256
-  batch_size: 32
+  batch_size: 64
   num_workers: 4
   use_ben_graham: true
 
 train:
   fold: 0
-
 
 hydra:
   run:

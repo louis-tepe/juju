@@ -43,5 +43,7 @@ def get_loss(name):
         return tf.keras.losses.MeanSquaredError()
     elif name == 'kappa':
         return KappaLoss()
+    elif name == 'crossentropy':
+        return tf.keras.losses.CategoricalCrossentropy()
     else:
         raise ValueError(f"Unknown loss: {name}")

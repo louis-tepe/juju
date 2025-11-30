@@ -23,13 +23,19 @@ class GeMPooling2D(keras.layers.Layer):
 
 
     def call(self, inputs):
-        # Avoid 0 or negative values for power operation stability if needed, 
-        # but usually inputs are ReLU activated features >= 0.
-        # To be safe against 0, we can add epsilon.
-        x = tf.maximum(inputs, 1e-6)
-        x = tf.pow(x, self.p)
+        # Ensure p is within reasonable bounds to prevent overflow/underflow
+        p = tf.clip_by_value(self.p, 1.0, 10.0)
+        
+        # GeM is typically defined for positive activations. 
+        # EfficientNet uses Swish which can be negative. We use ReLU to enforce positivity.
+        x = tf.nn.relu(inputs)
+        
+        # Add epsilon for numerical stability
+        x = tf.maximum(x, 1e-6)
+        
+        x = tf.pow(x, p)
         x = tf.reduce_mean(x, axis=[1, 2], keepdims=False)
-        x = tf.pow(x, 1.0 / self.p)
+        x = tf.pow(x, 1.0 / p)
         return x
 
     def get_config(self):

@@ -52,15 +52,11 @@ def create_model(config):
         
     # Head
     if config.model.use_ordinal:
-        # Ordinal Regression: 5 outputs with sigmoid (binary classification for each threshold >0, >1, >2, >3, >4) 
-        # Actually typically we output num_classes-1 for ordinal thresholds (0 vs >0 is implicit? No.)
-        # Common ordinal: Output k units. Target 2 is [1, 1, 0, 0, 0] (if 5 classes)
+        # Ordinal Regression
         outputs = keras.layers.Dense(config.model.num_classes, activation='sigmoid', name='output')(x)
     else:
-        # Standard Regression (1 output) or Classification
-        # Config implies 'regression' or 'classification' logic in loss. 
-        # Assuming Regression (1 output) as per plan "Sortie : 1 neurone (Régression)"
-        outputs = keras.layers.Dense(1, activation='linear', name='output')(x)
+        # Classification (Softmax)
+        outputs = keras.layers.Dense(config.model.num_classes, activation='softmax', name='output')(x)
         
     model = keras.Model(inputs, outputs)
     return model

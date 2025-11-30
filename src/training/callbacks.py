@@ -29,16 +29,20 @@ class QWKCallback(keras.callbacks.Callback):
             # We don't need to store images if we just predict
         
         val_labels = np.array(val_labels)
+        if len(val_labels.shape) > 1 and val_labels.shape[-1] > 1:
+             val_labels = np.argmax(val_labels, axis=-1)
         
         # Predict
         val_preds_raw = self.model.predict(self.validation_data, verbose=0)
         
-        # Flatten
-        val_preds_raw = val_preds_raw.flatten()
-        
-        # 1. Standard QWK (Rounding)
-        val_preds_rounded = np.rint(val_preds_raw).astype(int)
-        val_preds_rounded = np.clip(val_preds_rounded, 0, 4)
+        # 1. Standard QWK
+        # If classification (softmax), take argmax
+        if len(val_preds_raw.shape) > 1 and val_preds_raw.shape[-1] > 1:
+             val_preds_rounded = np.argmax(val_preds_raw, axis=-1)
+        else:
+             # Regression
+             val_preds_rounded = np.rint(val_preds_raw).astype(int)
+             val_preds_rounded = np.clip(val_preds_rounded, 0, 4)
         
         qwk = quadratic_weighted_kappa(val_labels, val_preds_rounded)
         
@@ -52,7 +56,15 @@ class QWKCallback(keras.callbacks.Callback):
         
         print(f"\nEpoch {epoch+1}: val_qwk: {qwk:.4f}")
         
-        if wandb.run:
-            wandb.log({"val_qwk": qwk, "epoch": epoch + 1})
-            
+        # logs["val_qwk"] = qwk  <-- This is already there, just ensuring we rely on it
         logs["val_qwk"] = qwk
+
+class LRLogger(keras.callbacks.Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        lr = self.model.optimizer.learning_rate
+        if hasattr(lr, "numpy"):
+            lr = lr.numpy()
+        elif hasattr(lr, "value"):
+            lr = lr.value()
+        logs["learning_rate"] = float(lr)

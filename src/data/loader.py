@@ -5,6 +5,7 @@ import os
 import albumentations as A
 from functools import partial
 from src.data.preprocess import preprocess_image
+import hydra
 
 class DataLoader:
     def __init__(self, config):
@@ -40,7 +41,7 @@ class DataLoader:
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                     img = cv2.resize(img, (size_int, size_int))
                 
-                img = img.astype(np.float32) / 255.0
+                img = img.astype(np.float32)
                 return img
             except Exception as e:
                 print(f"Error processing {path_str}: {e}")
@@ -75,6 +76,9 @@ class DataLoader:
         paths = df['path'].values
         labels = df['diagnosis'].values.astype(np.int32)
         
+        # One-hot encode labels
+        labels = tf.one_hot(labels, depth=5)
+        
         # Create Dataset
         dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
         
@@ -85,10 +89,14 @@ class DataLoader:
             use_ben_graham=self.config.data.use_ben_graham
         )
         
-        dataset = dataset.map(process_fn, num_parallel_calls=self.config.data.num_workers)
+        dataset = dataset.map(process_fn, num_parallel_calls=self.autotune)
+        
+        # Cache dataset in RAM (since it's small ~3k images * 256*256*3 * 4 bytes ~ 2.7GB)
+        # This will make epochs 2+ extremely fast.
+        dataset = dataset.cache()
         
         if training:
-            dataset = dataset.map(self._augment_image, num_parallel_calls=self.config.data.num_workers)
+            dataset = dataset.map(self._augment_image, num_parallel_calls=self.autotune)
             dataset = dataset.shuffle(buffer_size=1000)
         
         dataset = dataset.batch(self.config.data.batch_size)
@@ -121,14 +129,7 @@ class DataLoader:
         # Mix Images
         images_mix = lam * images + (1 - lam) * images_shuffled
         
-        # Mix Labels (Regression)
-        labels = tf.cast(labels, tf.float32)
-        labels_shuffled = tf.cast(labels_shuffled, tf.float32)
-        
-        if len(labels.shape) == 1:
-             labels = tf.expand_dims(labels, -1)
-             labels_shuffled = tf.expand_dims(labels_shuffled, -1)
-        
+        # Mix Labels (One-Hot)
         lam_label = tf.reshape(lam, [-1, 1])
         labels_mix = lam_label * labels + (1 - lam_label) * labels_shuffled
         
@@ -138,14 +139,14 @@ def get_dataset(config, split='train'):
     """
     Factory function to get dataset based on split.
     """
-    base_dir = config.data.train_images if split in ['train', 'val'] else config.data.test_images
+    base_dir = hydra.utils.to_absolute_path(config.data.train_images if split in ['train', 'val'] else config.data.test_images)
     
     if split in ['train', 'val']:
-        csv_path = config.data.train_folds_csv
+        csv_path = hydra.utils.to_absolute_path(config.data.train_folds_csv)
         # Fallback if folds not created
         if not os.path.exists(csv_path):
             print(f"Folds file {csv_path} not found, using raw {config.data.train_csv}")
-            csv_path = config.data.train_csv
+            csv_path = hydra.utils.to_absolute_path(config.data.train_csv)
             df = pd.read_csv(csv_path)
             # Simple random split fallback
             if 'fold' not in df.columns:
@@ -165,7 +166,7 @@ def get_dataset(config, split='train'):
             df = df[df['fold'] == fold]
     else:
         # Test
-        csv_path = config.data.test_csv
+        csv_path = hydra.utils.to_absolute_path(config.data.test_csv)
         if not os.path.exists(csv_path):
              # Dummy df for running without data
              df = pd.DataFrame({'id_code': ['0005cfc8afb6']})
