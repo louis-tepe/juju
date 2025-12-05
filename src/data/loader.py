@@ -1,17 +1,20 @@
-import tensorflow as tf
+import os
+from functools import partial
+
+import albumentations as A
+import hydra
 import numpy as np
 import pandas as pd
-import os
-import albumentations as A
-from functools import partial
-from src.data.preprocess import preprocess_image
-import hydra
+import tensorflow as tf
+
+from src.data.preprocess import load_and_preprocess_image
+
 
 class DataLoader:
     def __init__(self, config):
         self.config = config
         self.autotune = tf.data.AUTOTUNE
-        
+
     def get_augmentations(self):
         return A.Compose([
             A.HorizontalFlip(p=0.5),
@@ -23,23 +26,21 @@ class DataLoader:
         ])
 
     def _process_path(self, path, label, size, use_ben_graham):
-        """
-        Wrapper for numpy processing to be used with tf.py_function
-        """
+        """Load and preprocess a single image."""
         def _read_img(path_b, size_b, use_bg_b):
             path_str = path_b.decode("utf-8")
             size_int = int(size_b)
             use_bg_bool = bool(use_bg_b)
-            
+
             try:
                 if use_bg_bool:
-                    img = preprocess_image(path_str, size=size_int)
+                    img = load_and_preprocess_image(path_str, size=size_int)
                 else:
-                    # Standard resize
                     import cv2
                     img = cv2.imread(path_str)
                     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                     img = cv2.resize(img, (size_int, size_int))
+                    img = img.astype(np.float32) / 255.0
                 
                 img = img.astype(np.float32)
                 return img
@@ -48,17 +49,15 @@ class DataLoader:
                 return np.zeros((size_int, size_int, 3), dtype=np.float32)
 
         img = tf.numpy_function(
-            _read_img, 
-            [path, size, use_ben_graham], 
+            _read_img,
+            [path, size, use_ben_graham],
             tf.float32
         )
         img.set_shape([size, size, 3])
         return img, label
 
     def _augment_image(self, image, label):
-        """
-        Wrapper for Albumentations
-        """
+        """Albumentations-based augmentation (slower, more flexible)."""
         def _aug_fn(img):
             aug = self.get_augmentations()
             data = aug(image=img)
@@ -68,87 +67,58 @@ class DataLoader:
         aug_img.set_shape([self.config.data.image_size, self.config.data.image_size, 3])
         return aug_img, label
 
+    def _augment_image_native(self, image, label):
+        """TF-Native augmentations (faster, GPU-friendly)."""
+        image = tf.image.random_flip_left_right(image)
+        image = tf.image.random_flip_up_down(image)
+        image = tf.image.random_brightness(image, max_delta=0.1)
+        image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
+        k = tf.random.uniform([], 0, 4, dtype=tf.int32)
+        image = tf.image.rot90(image, k=k)
+        image = tf.clip_by_value(image, 0.0, 1.0)
+        return image, label
+
     def build_dataset(self, df: pd.DataFrame, training: bool = True):
-        """
-        Builds a tf.data.Dataset from a pandas DataFrame.
-        Expected columns: 'path', 'diagnosis'
-        """
+        """Builds a tf.data.Dataset from a pandas DataFrame."""
         paths = df['path'].values
         labels = df['diagnosis'].values.astype(np.int32)
-        
-        # One-hot encode labels
         labels = tf.one_hot(labels, depth=5)
-        
-        # Create Dataset
+
         dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
-        
-        # Map Loading & Preprocessing
+
         process_fn = partial(
-            self._process_path, 
-            size=self.config.data.image_size, 
+            self._process_path,
+            size=self.config.data.image_size,
             use_ben_graham=self.config.data.use_ben_graham
         )
-        
-        dataset = dataset.map(process_fn, num_parallel_calls=self.autotune)
-        
-        # Cache dataset in RAM (since it's small ~3k images * 256*256*3 * 4 bytes ~ 2.7GB)
-        # This will make epochs 2+ extremely fast.
-        dataset = dataset.cache()
+
+        dataset = dataset.map(process_fn, num_parallel_calls=4)
         
         if training:
-            dataset = dataset.map(self._augment_image, num_parallel_calls=self.autotune)
-            dataset = dataset.shuffle(buffer_size=1000)
-        
+            use_native = hasattr(self.config.data, 'use_native_augment') and self.config.data.use_native_augment
+            if use_native:
+                dataset = dataset.map(self._augment_image_native, num_parallel_calls=4)
+            else:
+                dataset = dataset.map(self._augment_image, num_parallel_calls=4)
+
         dataset = dataset.batch(self.config.data.batch_size)
-        
-        if training:
-            dataset = dataset.map(self.mixup, num_parallel_calls=self.autotune)
-            
         dataset = dataset.prefetch(self.autotune)
-        
+
         return dataset
 
-    def mixup(self, images, labels, alpha=0.2):
-        """
-        Applies Mixup augmentation: x = lambda * x1 + (1 - lambda) * x2
-        """
-        batch_size = tf.shape(images)[0]
-        
-        # Sample lambda from Beta distribution
-        # TF doesn't have Beta, so we use Gamma: Beta(a,b) = Gamma(a) / (Gamma(a) + Gamma(b))
-        beta_dist = tf.random.gamma(shape=[batch_size], alpha=alpha)
-        beta_dist2 = tf.random.gamma(shape=[batch_size], alpha=alpha)
-        lam = beta_dist / (beta_dist + beta_dist2)
-        lam = tf.reshape(lam, [-1, 1, 1, 1])
-        
-        # Shuffle
-        indices = tf.random.shuffle(tf.range(batch_size))
-        images_shuffled = tf.gather(images, indices)
-        labels_shuffled = tf.gather(labels, indices)
-        
-        # Mix Images
-        images_mix = lam * images + (1 - lam) * images_shuffled
-        
-        # Mix Labels (One-Hot)
-        lam_label = tf.reshape(lam, [-1, 1])
-        labels_mix = lam_label * labels + (1 - lam_label) * labels_shuffled
-        
-        return images_mix, labels_mix
 
 def get_dataset(config, split='train'):
-    """
-    Factory function to get dataset based on split.
-    """
-    base_dir = hydra.utils.to_absolute_path(config.data.train_images if split in ['train', 'val'] else config.data.test_images)
-    
+    """Factory function to get dataset based on split."""
+    base_dir = hydra.utils.to_absolute_path(
+        config.data.train_images if split in ['train', 'val'] else config.data.test_images
+    )
+
     if split in ['train', 'val']:
         csv_path = hydra.utils.to_absolute_path(config.data.train_folds_csv)
-        # Fallback if folds not created
         if not os.path.exists(csv_path):
             print(f"Folds file {csv_path} not found, using raw {config.data.train_csv}")
             csv_path = hydra.utils.to_absolute_path(config.data.train_csv)
             df = pd.read_csv(csv_path)
-            # Simple random split fallback
             if 'fold' not in df.columns:
                 from sklearn.model_selection import StratifiedKFold
                 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=config.seed)
@@ -157,24 +127,21 @@ def get_dataset(config, split='train'):
                     df.loc[v, 'fold'] = fold
         else:
             df = pd.read_csv(csv_path)
-            
-        # Filter by fold
+
         fold = config.train.fold
         if split == 'train':
             df = df[df['fold'] != fold]
         elif split == 'val':
             df = df[df['fold'] == fold]
     else:
-        # Test
         csv_path = hydra.utils.to_absolute_path(config.data.test_csv)
         if not os.path.exists(csv_path):
-             # Dummy df for running without data
-             df = pd.DataFrame({'id_code': ['0005cfc8afb6']})
+            df = pd.DataFrame({'id_code': ['0005cfc8afb6']})
         else:
             df = pd.read_csv(csv_path)
-            
+
     df['path'] = df['id_code'].apply(lambda x: os.path.join(base_dir, f"{x}.png"))
-    
+
     if split == 'train':
         return DataLoader(config).build_dataset(df, training=True)
     elif split == 'val':

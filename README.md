@@ -1,19 +1,5 @@
-# APTOS 2019 Blindness Detection
+cd && cd Documents/Code/Project/ju && make prepare-test
 
-Source code for the Kaggle APTOS 2019 competition.
 
-## Installation
 
-```bash
-poetry install
-```
-
-## Usage
-
-```bash
-# Train
-python src/train.py
-
-# Experiment
-python src/train.py experiment=efficientnet_b4
-```
+cd && cd Documents/Code/Project/ju && make train-test

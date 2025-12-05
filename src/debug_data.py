@@ -1,25 +1,25 @@
-import os
-import tensorflow as tf
-import numpy as np
 import cv2
 import hydra
+import numpy as np
+
 from src.data.loader import get_dataset
 from src.utils.seeding import seed_everything
+
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg):
     seed_everything(cfg.seed)
-    
+
     # Get Train Dataset
     ds = get_dataset(cfg, split='train')
-    
+
     print("Iterating through dataset...")
     for i, (images, labels) in enumerate(ds.take(1)):
         print(f"Batch {i} shape: {images.shape}, Labels shape: {labels.shape}")
         print(f"Images range: [{np.min(images)}, {np.max(images)}]")
         print(f"Images mean: {np.mean(images)}, std: {np.std(images)}")
         print(f"Labels sample: {labels[0]}")
-        
+
         # Save first 5 images
         for j in range(5):
             img = images[j].numpy()

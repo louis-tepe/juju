@@ -19,6 +19,7 @@ data:
   batch_size: 64
   num_workers: 4
   use_ben_graham: true
+  use_native_augment: false
 
 train:
   fold: 0

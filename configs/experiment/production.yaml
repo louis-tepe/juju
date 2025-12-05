@@ -1,0 +1,27 @@
+# @package _global_
+# Mode Production : Optimized for Powerful Desktop (High VRAM GPU)
+# Goal: Maximize performance, train all folds, ensemble
+
+defaults:
+  - override /model: efficientnet
+
+# Data settings for maximum quality
+data:
+  image_size: 512 # Larger images = more detail
+  batch_size: 16 # Balanced for 12GB VRAM (Float16) + 512px
+  num_workers: 12 # Utilize 32GB RAM & Multi-core CPU
+  use_tfrecords: true # Enable Offline Pipeline for Prod
+
+# Model: Use heavier backbone
+model:
+  backbone: "efficientnet_b4" # Stronger backbone (B5 might OOM on 12GB)
+  dropout: 0.4 # More regularization
+
+# Training for max performance
+train:
+  epochs: 30 # More epochs for convergence
+  lr: 1e-4 # Standard LR
+  min_lr: 1e-7 # Lower floor
+  patience: 7 # More patience
+  fold: 0 # Can be overridden per run for full CV
+  accumulate_grad_batches: 2 # Effective batch size = 32 (16*2)

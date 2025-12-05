@@ -1,5 +1,6 @@
-import tensorflow as tf
 import keras
+import tensorflow as tf
+
 
 @keras.saving.register_keras_serializable()
 class GeMPooling2D(keras.layers.Layer):
@@ -25,14 +26,14 @@ class GeMPooling2D(keras.layers.Layer):
     def call(self, inputs):
         # Ensure p is within reasonable bounds to prevent overflow/underflow
         p = tf.clip_by_value(self.p, 1.0, 10.0)
-        
-        # GeM is typically defined for positive activations. 
+
+        # GeM is typically defined for positive activations.
         # EfficientNet uses Swish which can be negative. We use ReLU to enforce positivity.
         x = tf.nn.relu(inputs)
-        
+
         # Add epsilon for numerical stability
         x = tf.maximum(x, 1e-6)
-        
+
         x = tf.pow(x, p)
         x = tf.reduce_mean(x, axis=[1, 2], keepdims=False)
         x = tf.pow(x, 1.0 / p)

@@ -1,36 +1,63 @@
 # Tech Stack & Tools (2025 Standards)
 
-Ce document définit la stack technique officielle pour le projet APTOS 2019. L'objectif est la performance, la reproductibilité et la rapidité d'itération.
+Stack technique officielle pour le projet APTOS 2019.
 
 ## Core
 
-- **Language** : Python 3.11+ (Performance boost vs 3.9/3.10).
-- **Package Manager** : `poetry` (Gestion déterministe des dépendances et environnements virtuels).
-- **Version Control** : Git.
-- **Data Versioning** : `DVC` (Data Version Control) pour tracker les versions du dataset.
+| Tool   | Version | Usage                   |
+| ------ | ------- | ----------------------- |
+| Python | 3.11+   | Langage principal       |
+| Poetry | Latest  | Gestion des dépendances |
+| Git    | Latest  | Version control         |
 
-## Deep Learning & Data Science
+## Deep Learning
 
-- **Framework** : `tensorflow` 2.16+ / `keras` 3.0+ (Backend agnostic, haute performance).
-- **Data Manipulation** : `pandas` 2.2+ (Standard) & `numpy` 1.26+.
-- **Computer Vision** :
-  - `opencv-python-headless` : Traitement d'images bas niveau.
-  - `albumentations` : Augmentations d'images SOTA (State of the Art).
-- **Visualization** : `seaborn` & `matplotlib`.
+| Library          | Version | Usage                |
+| ---------------- | ------- | -------------------- |
+| TensorFlow       | 2.16+   | Framework DL         |
+| Keras            | 3.0+    | API haut niveau      |
+| tensorflow-metal | Latest  | Accélération M1/M2   |
+| pandas           | 2.2+    | Manipulation données |
+| numpy            | 1.26+   | Calcul numérique     |
 
-## MLOps & Experimentation
+## Computer Vision
 
-- **Configuration** : `hydra-core` (Gestion dynamique des configs via YAML/CLI).
-- **Tracking** : `wandb` (Weights & Biases) pour le suivi des expériences, métriques et artefacts (si Internet dispo en training).
-- **Optimization** : `optuna` (Recherche d'hyperparamètres bayésienne).
+| Library                | Usage                              |
+| ---------------------- | ---------------------------------- |
+| opencv-python-headless | Traitement d'images bas niveau     |
+| albumentations         | Augmentations avancées (optionnel) |
 
-## Code Quality (Modern Python)
+## MLOps & Configuration
 
-- **Linter & Formatter** : `ruff` (Remplace Flake8, Black, Isort avec une vitesse x100).
-- **Type Checking** : `mypy` (Typage statique strict).
-- **Testing** : `pytest`.
+| Tool            | Usage                             |
+| --------------- | --------------------------------- |
+| hydra-core 1.3+ | Configuration dynamique YAML/CLI  |
+| wandb           | Tracking expériences et métriques |
+
+## Code Quality
+
+| Tool   | Usage                                            |
+| ------ | ------------------------------------------------ |
+| ruff   | Linter + Formatter (remplace flake8/black/isort) |
+| mypy   | Type checking statique                           |
+| pytest | Tests unitaires                                  |
+
+## Platform-Specific
+
+### MacOS M1/M2
+
+- `tensorflow-metal` pour accélération GPU Metal
+- `use_native_augment: true` pour éviter les bottlenecks CPU
+- Batch size réduit (32) pour stabilité
+
+### Linux/CUDA GPU
+
+- `use_mixed_precision: true` activé
+- `use_xla: true` pour optimisation
+- Batch size plus élevé (16-64)
 
 ## Kaggle Specifics
 
-- **Kernel Environment** : Compatibilité avec les images Docker Kaggle (GPU/TPU).
-- **Offline Mode** : Capacité à charger les dépendances via des datasets (`pip download` préalable).
+- Compatibilité avec images Docker Kaggle (GPU/TPU)
+- Offline Mode : Chargement dépendances via datasets
+- Script unique `submission.py` avec TTA

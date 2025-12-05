@@ -1,0 +1,27 @@
+# @package _global_
+# Mode Test : Optimized for MacBook Pro M2 (16GB RAM)
+# Goal: Fast iteration, quick results, single fold training
+
+defaults:
+  - override /model: efficientnet
+
+# Override data settings for speed
+data:
+  image_size: 224
+  batch_size: 32
+  use_ben_graham: false
+  use_native_augment: true
+
+# Override model to lightest variant
+model:
+  backbone: "efficientnet_b0"
+  dropout: 0.3
+
+# Override training for speed
+train:
+  epochs: 10
+  lr: 3e-4
+  patience: 3
+  fold: 0
+  use_mixed_precision: false
+  use_xla: false

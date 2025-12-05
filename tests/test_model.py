@@ -1,7 +1,9 @@
 import pytest
 import tensorflow as tf
 from omegaconf import OmegaConf
+
 from src.models.factory import create_model
+
 
 @pytest.fixture
 def config():
@@ -20,10 +22,10 @@ def config():
 def test_model_creation(config):
     model = create_model(config)
     assert isinstance(model, tf.keras.Model)
-    
+
     input_shape = (1, 256, 256, 3)
     output = model(tf.random.normal(input_shape))
-    
+
     # Regression output should be (1, 1)
     assert output.shape == (1, 1)
 

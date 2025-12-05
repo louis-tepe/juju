@@ -32,4 +32,5 @@ Une tâche ou une fonctionnalité est considérée comme "Terminée" uniquement 
 ## 5. Performance (Si applicable)
 
 - [ ] **Metric** : L'amélioration du score QWK est vérifiée sur le set de Validation (CV).
+- [ ] **CI/CD** : Le pipeline GitHub Actions passe au vert.
 - [ ] **Time** : Le temps d'entraînement ou d'inférence reste dans les limites acceptables (9h max pour inférence).
