@@ -109,7 +109,7 @@ class Trainer:
         print(f"Class Weights: {class_weights}")
 
         # Two-phase training configuration
-        warmup_epochs = getattr(self.config.train, 'warmup_epochs', 3)
+        warmup_epochs = getattr(self.config.train, 'warmup_epochs', 0)
         total_epochs = self.config.train.epochs
         finetune_lr = getattr(self.config.train, 'finetune_lr', self.config.train.lr * 0.1)
         use_cosine_decay = getattr(self.config.train, 'use_cosine_decay', False)
@@ -117,111 +117,117 @@ class Trainer:
         # Get backbone layer (layer index 1 after Input)
         backbone = self.model.layers[1]
         
-        # ============ PHASE 1: Head Warmup (Frozen Backbone) ============
-        print(f"\n{'='*50}")
-        print(f"PHASE 1: Head Warmup ({warmup_epochs} epochs) - Backbone FROZEN")
-        print(f"{'='*50}")
+        history = None  # Will be set by whichever phase runs
         
-        backbone.trainable = False
-        self.model.compile(
-            optimizer=keras.optimizers.AdamW(learning_rate=self.config.train.lr, clipnorm=1.0),
-            loss=loss_fn,
-            metrics=metrics
-        )
+        # ============ PHASE 1: Head Warmup (only if warmup_epochs > 0) ============
+        if warmup_epochs > 0:
+            print(f"\n{'='*50}")
+            print(f"PHASE 1: Head Warmup ({warmup_epochs} epochs) - Backbone FROZEN")
+            print(f"{'='*50}")
+            
+            backbone.trainable = False
+            self.model.compile(
+                optimizer=keras.optimizers.AdamW(learning_rate=self.config.train.lr, clipnorm=1.0),
+                loss=loss_fn,
+                metrics=metrics
+            )
+            
+            warmup_callbacks = [
+                QWKCallback(val_ds, is_regression=is_regression),
+                keras.callbacks.ModelCheckpoint(
+                    filepath=os.path.join(os.getcwd(), "model_best.keras"),
+                    monitor="val_qwk",
+                    mode="max",
+                    save_best_only=True,
+                    verbose=1
+                ),
+                keras.callbacks.ModelCheckpoint(
+                    filepath=os.path.join(os.getcwd(), "model_best.weights.h5"),
+                    monitor="val_qwk",
+                    mode="max",
+                    save_best_only=True,
+                    save_weights_only=True,
+                    verbose=0
+                ),
+                LRLogger()
+            ]
+            
+            history = self.model.fit(
+                train_ds,
+                validation_data=val_ds,
+                epochs=warmup_epochs,
+                callbacks=warmup_callbacks,
+                class_weight=class_weights if not is_regression else None
+            )
         
-        # Callbacks without early stopping for warmup
-        # Save both full model (.keras) and weights only (.h5) for faster Phase 2 loading
-        warmup_callbacks = [
-            QWKCallback(val_ds, is_regression=is_regression),
-            keras.callbacks.ModelCheckpoint(
-                filepath=os.path.join(os.getcwd(), "model_best.keras"),
-                monitor="val_qwk",
-                mode="max",
-                save_best_only=True,
-                verbose=1
-            ),
-            keras.callbacks.ModelCheckpoint(
-                filepath=os.path.join(os.getcwd(), "model_best.weights.h5"),
-                monitor="val_qwk",
-                mode="max",
-                save_best_only=True,
-                save_weights_only=True,  # Faster to load in Phase 2
-                verbose=0
-            ),
-            LRLogger()
-        ]
-        
-        history1 = self.model.fit(
-            train_ds,
-            validation_data=val_ds,
-            epochs=warmup_epochs,
-            callbacks=warmup_callbacks,
-            class_weight=class_weights if not is_regression else None
-        )
-        
-        # ============ PHASE 2: Full Fine-tuning (Unfrozen) ============
+        # ============ PHASE 2: Full Training (Unfrozen) ============
         finetune_epochs = total_epochs - warmup_epochs
         if finetune_epochs > 0:
-            print(f"\n{'='*50}")
-            print(f"PHASE 2: Fine-tuning ({finetune_epochs} epochs) - Backbone UNFROZEN")
-            print(f"LR: {finetune_lr:.2e} (10x lower)")
+            if warmup_epochs > 0:
+                print(f"\n{'='*50}")
+                print(f"PHASE 2: Fine-tuning ({finetune_epochs} epochs) - Backbone UNFROZEN")
+                print(f"LR: {finetune_lr:.2e}")
+            else:
+                print(f"\n{'='*50}")
+                print(f"FULL TRAINING ({finetune_epochs} epochs) - All layers trainable")
+                print(f"LR: {self.config.train.lr:.2e}")
+            
             if use_cosine_decay:
                 print("Using Cosine Decay scheduler")
             print(f"{'='*50}")
             
-            # Load best weights from Phase 1 (weights only - faster than full model)
-            best_weights_path = os.path.join(os.getcwd(), "model_best.weights.h5")
-            best_model_path = os.path.join(os.getcwd(), "model_best.keras")
+            # Load best weights from Phase 1 if it ran
+            if warmup_epochs > 0:
+                best_weights_path = os.path.join(os.getcwd(), "model_best.weights.h5")
+                best_model_path = os.path.join(os.getcwd(), "model_best.keras")
+                
+                if os.path.exists(best_weights_path):
+                    print(f"Loading best weights from Phase 1: {best_weights_path}")
+                    self.model.load_weights(best_weights_path)
+                elif os.path.exists(best_model_path):
+                    print(f"Loading best model from Phase 1: {best_model_path}")
+                    loaded_model = keras.models.load_model(best_model_path)
+                    self.model.set_weights(loaded_model.get_weights())
+                    del loaded_model
             
-            if os.path.exists(best_weights_path):
-                print(f"Loading best weights from Phase 1: {best_weights_path}")
-                self.model.load_weights(best_weights_path)
-            elif os.path.exists(best_model_path):
-                # Fallback: load from full model (slower)
-                print(f"Loading best model from Phase 1: {best_model_path}")
-                loaded_model = keras.models.load_model(best_model_path)
-                self.model.set_weights(loaded_model.get_weights())
-                del loaded_model  # Free memory
-            
+            # Unfreeze backbone
             backbone.trainable = True
             
-            # OPTIMIZATION: Keep BatchNormalization layers frozen!
-            # 1. Preserves pretrained statistics (critical for small batch sizes)
-            # 2. Significantly speeds up training on Metal/M2 (avoids updating BN params)
+            # Keep BatchNormalization layers frozen to preserve pretrained statistics
             for layer in backbone.layers:
                 if isinstance(layer, keras.layers.BatchNormalization):
                     layer.trainable = False
             
+            # Select learning rate based on whether we had warmup
+            current_lr = finetune_lr if warmup_epochs > 0 else self.config.train.lr
+            
             # Optimizer: Cosine decay or constant LR
             if use_cosine_decay:
-                # Estimate steps per epoch
                 steps_per_epoch = len(train_ds)
                 decay_steps = steps_per_epoch * finetune_epochs
                 lr_schedule = keras.optimizers.schedules.CosineDecay(
-                    initial_learning_rate=finetune_lr,
+                    initial_learning_rate=current_lr,
                     decay_steps=decay_steps,
-                    alpha=self.config.train.min_lr / finetune_lr
+                    alpha=self.config.train.min_lr / current_lr
                 )
-                # Remove clipnorm=1.0 - global norm calculation is expensive on Metal with full backbone
-                optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule)
+                optimizer = keras.optimizers.AdamW(learning_rate=lr_schedule, clipnorm=1.0)
             else:
-                optimizer = keras.optimizers.AdamW(learning_rate=finetune_lr)
+                optimizer = keras.optimizers.AdamW(learning_rate=current_lr, clipnorm=1.0)
             
-            # Loss for fine-tuning: keep same as phase 1 for regression
+            # Loss
             if is_regression:
                 finetune_loss = loss_fn
             else:
                 label_smoothing = getattr(self.config.train, 'label_smoothing', 0.1)
-                finetune_loss = keras.losses.CategoricalCrossentropy(label_smoothing=label_smoothing)
+                finetune_loss = get_loss(self.config.train.loss, label_smoothing=label_smoothing)
             
-            # Recompile with new optimizer and frozen BN
             self.model.compile(
                 optimizer=optimizer,
                 loss=finetune_loss,
                 metrics=metrics
             )
             
-            # Full callbacks with early stopping
+            # Callbacks
             finetune_callbacks = [
                 QWKCallback(val_ds, is_regression=is_regression),
                 keras.callbacks.ModelCheckpoint(
@@ -235,13 +241,12 @@ class Trainer:
                     monitor="val_qwk",
                     mode="max",
                     patience=self.config.train.patience,
-                    restore_best_weights=False,  # SWA handles final weights
+                    restore_best_weights=True,
                     verbose=1
                 ),
                 LRLogger()
             ]
             
-            # Only add ReduceLROnPlateau if not using cosine decay
             if not use_cosine_decay:
                 finetune_callbacks.insert(2, keras.callbacks.ReduceLROnPlateau(
                     monitor="val_loss",
@@ -251,28 +256,36 @@ class Trainer:
                     verbose=1
                 ))
             
-            # Add SWA callback if enabled
+            # SWA if enabled
             use_swa = getattr(self.config.train, 'use_swa', False)
             if use_swa:
                 swa_start = getattr(self.config.train, 'swa_start_epoch', int(total_epochs * 0.75))
-                # Adjust for phase 2 (swa_start is relative to total epochs)
                 swa_start_phase2 = max(0, swa_start - warmup_epochs)
                 finetune_callbacks.append(SWA(start_epoch=swa_start_phase2))
-                print(f"SWA enabled: will start averaging at epoch {swa_start} (phase 2 epoch {swa_start_phase2})")
+                print(f"SWA enabled: will start averaging at epoch {swa_start}")
             
+            # Add diagnostic: Check input data stats (once)
+            sample_batch = next(iter(train_ds))
+            imgs = sample_batch[0].numpy()
+            print(f"\n📢 INPUT DATA STATS: Min={imgs.min():.2f}, Max={imgs.max():.2f}, Mean={imgs.mean():.2f}")
+            if imgs.max() <= 1.5:
+                print("⚠️ WARNING: Images appear to be normalized [0,1]. EfficientNet expects [0,255]!")
+
             history2 = self.model.fit(
                 train_ds,
                 validation_data=val_ds,
                 epochs=finetune_epochs,
                 callbacks=finetune_callbacks,
-                class_weight=class_weights if not is_regression else None
+                class_weight=None # DISABLED class weights for debugging start
             )
             
-            # Merge histories for plotting
-            for key in history1.history:
-                history1.history[key].extend(history2.history.get(key, []))
-        
-        history = history1
+            # Merge histories if both phases ran
+            if history is not None:
+                for key in history.history:
+                    history.history[key].extend(history2.history.get(key, []))
+            else:
+                history = history2
+
 
         # Plot Metrics
         self.plot_metrics(history)

@@ -30,55 +30,50 @@ def get_train_transforms(image_size: int = 380):
         A.VerticalFlip(p=0.5),
         A.RandomRotate90(p=0.5),
         A.ShiftScaleRotate(
-            shift_limit=0.1,
-            scale_limit=0.15,
-            rotate_limit=15,
-            border_mode=0,  # Black border
-            p=0.5
+            shift_limit=0.05,  # Reduced from 0.1
+            scale_limit=0.1,   # Reduced from 0.15
+            rotate_limit=10,   # Reduced from 15
+            border_mode=0,     # Black border
+            p=0.3              # Reduced from 0.5
         ),
         
-        # Lens distortions (simulate camera variance across clinics)
-        # Low magnitude to avoid destroying lesion patterns
-        A.OneOf([
-            A.GridDistortion(distort_limit=0.1, border_mode=0, p=1.0),
-            A.OpticalDistortion(distort_limit=0.1, shift_limit=0.1, border_mode=0, p=1.0),
-        ], p=0.3),
+        # REMOVED: GridDistortion and OpticalDistortion
+        # These can destroy lesion patterns and confuse the model
         
-        # Color/brightness (moderate - simulates clinic variance)
+        # Color/brightness (conservative - preserve diagnostic features)
         A.RandomBrightnessContrast(
-            brightness_limit=0.2,
-            contrast_limit=0.2,
-            p=0.5
+            brightness_limit=0.1,  # Reduced from 0.2
+            contrast_limit=0.1,    # Reduced from 0.2
+            p=0.3                  # Reduced from 0.5
         ),
         A.HueSaturationValue(
-            hue_shift_limit=10,  # Conservative
-            sat_shift_limit=20,
-            val_shift_limit=10,
-            p=0.3
+            hue_shift_limit=5,     # Reduced from 10
+            sat_shift_limit=10,    # Reduced from 20
+            val_shift_limit=5,     # Reduced from 10
+            p=0.2                  # Reduced from 0.3
         ),
-        # Gamma correction (exposure variation across different fundus cameras)
-        A.RandomGamma(gamma_limit=(80, 120), p=0.3),
         
-        # Blur (simulates camera focus variance)
+        # REMOVED: RandomGamma (can alter lesion visibility)
+        
+        # Blur (simulates camera focus variance) - kept light
         A.OneOf([
             A.GaussianBlur(blur_limit=(3, 5)),
             A.MedianBlur(blur_limit=3),
-        ], p=0.3),
+        ], p=0.2),  # Reduced from 0.3
         
-        # CLAHE for local contrast enhancement (common in medical imaging)
-        A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.3),
+        # CLAHE for local contrast enhancement (beneficial for retinas)
+        A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.2),  # Reduced from 0.3
         
-        # Regularization dropout (simulates artifacts/dust)
-        # Reduced max_holes from 8 to 6 to preserve more diagnostic features
+        # Light regularization dropout
         A.CoarseDropout(
-            max_holes=6,
-            max_height=32,
-            max_width=32,
-            min_holes=2,
+            max_holes=4,       # Reduced from 6
+            max_height=24,     # Reduced from 32
+            max_width=24,      # Reduced from 32
+            min_holes=1,       # Reduced from 2
             min_height=8,
             min_width=8,
-            fill_value=0,  # Black fill to match fundus image borders
-            p=0.3
+            fill=0,
+            p=0.15             # Reduced from 0.3
         ),
     ])
 

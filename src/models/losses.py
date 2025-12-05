@@ -37,19 +37,51 @@ class KappaLoss(tf.keras.losses.Loss):
 
         return tf.reduce_mean(tf.square(y_true - y_pred))
 
+
+class CategoricalFocalCrossentropy(tf.keras.losses.Loss):
+    """
+    Categorical Focal Crossentropy Loss.
+    References:
+        - [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002)
+    """
+    def __init__(self, alpha=0.25, gamma=2.0, from_logits=False, label_smoothing=0.0, name='focal_loss'):
+        super().__init__(name=name)
+        self.alpha = alpha
+        self.gamma = gamma
+        self.from_logits = from_logits
+        self.label_smoothing = label_smoothing
+
+    def call(self, y_true, y_pred):
+        if self.label_smoothing > 0:
+            y_true = y_true * (1.0 - self.label_smoothing) + 0.5 * self.label_smoothing
+            
+        if self.from_logits:
+            y_pred = tf.nn.softmax(y_pred)
+
+        y_pred = tf.clip_by_value(y_pred, 1e-7, 1.0 - 1e-7)
+        cross_entropy = -y_true * tf.math.log(y_pred)
+        weight = self.alpha * y_true * tf.math.pow((1 - y_pred), self.gamma)
+        return tf.reduce_sum(weight * cross_entropy, axis=-1)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "alpha": self.alpha,
+            "gamma": self.gamma,
+            "from_logits": self.from_logits,
+            "label_smoothing": self.label_smoothing
+        })
+        return config
+
+
 def get_loss(name, **kwargs):
     """
     Get loss function by name.
-    
-    Args:
-        name: Loss name ('huber', 'smooth_l1', 'mse', 'kappa', 'crossentropy')
-        **kwargs: Additional arguments (e.g., delta for Huber loss)
     """
-    delta = kwargs.get('delta', 0.5)  # Default delta=0.5 for regression
+    delta = kwargs.get('delta', 0.5)
+    label_smoothing = kwargs.get('label_smoothing', 0.0)
     
     if name == 'huber' or name == 'smooth_l1':
-        # Huber loss (Smooth L1) - robust to outliers
-        # Top APTOS solutions found this better than MSE for mislabeled samples
         return tf.keras.losses.Huber(delta=delta)
     elif name == 'mse':
         return tf.keras.losses.MeanSquaredError()
@@ -58,6 +90,12 @@ def get_loss(name, **kwargs):
     elif name == 'kappa':
         return KappaLoss()
     elif name == 'crossentropy':
-        return tf.keras.losses.CategoricalCrossentropy()
+        return tf.keras.losses.CategoricalCrossentropy(label_smoothing=label_smoothing)
+    elif name == 'focal':
+        return CategoricalFocalCrossentropy(
+            alpha=kwargs.get('alpha', 0.25),
+            gamma=kwargs.get('gamma', 2.0),
+            label_smoothing=label_smoothing
+        )
     else:
         raise ValueError(f"Unknown loss: {name}")

@@ -6,33 +6,41 @@ defaults:
   - override /model: efficientnet
 
 # Data settings for maximum quality
+# Data settings for maximum quality
 data:
-  image_size: 512 # Larger images = more detail
-  batch_size: 16 # Balanced for 12GB VRAM (Float16) + 512px
-  num_workers: 12 # Utilize 32GB RAM & Multi-core CPU
-  use_tfrecords: true # Enable Offline Pipeline for Prod
-  use_strong_augment: true # Use Albumentations augmentations
+  image_size: 512 # Optimal for B5
+  batch_size: 8 # Reduced for B5 + 512px (adjust if OOM)
+  num_workers: 12
+  use_tfrecords: true
+  use_strong_augment: true
+  use_ben_graham: true # RE-ENABLED: Essential for retinal image normalization
 
-# Model: Use heavier backbone with regression output
+# Model: State-of-the-Art Backbone
 model:
-  backbone: "efficientnet_b4" # Stronger backbone (B5 might OOM on 12GB)
-  dropout: 0.4 # More regularization
-  output_type: "regression" # Regression for threshold optimization
-  constrain_regression: true # Sigmoid*4 to constrain output [0,4]
+  backbone: "efficientnet_b5" # Powerful backbone for high accuracy
+  dropout: 0.4 # Increased dropout for larger model
+  output_type: "softmax" # Classification (Best stability)
 
 # Training for max QWK performance
 train:
-  epochs: 40 # More epochs for better convergence with SWA
-  warmup_epochs: 5 # Longer warmup for stable head training
-  lr: 1e-4 # Standard LR
-  finetune_lr: 1e-5 # 10x lower for fine-tuning
-  min_lr: 1e-7 # Lower floor
-  patience: 10 # More patience for SWA
-  fold: 0 # Can be overridden per run for full CV
-  accumulate_grad_batches: 2 # Effective batch size = 32 (16*2)
-  use_cosine_decay: true # Smoother LR schedule
-  use_swa: true # Enable Stochastic Weight Averaging
-  swa_start_epoch: 30 # Start SWA at 75% of training
-  huber_delta: 0.5 # Huber loss delta (robust to outliers)
-  label_smoothing: 0.1 # For classification fallback
-
+  # Two-phase training strategy:
+  # Phase 1: Warmup (frozen backbone) - train head only with higher LR
+  # Phase 2: Fine-tuning (unfrozen) - train all layers with lower LR
+  epochs: 40 # Total epochs (warmup + finetune)
+  warmup_epochs: 5 # Phase 1: Train head only (backbone frozen)
+  lr: 1e-3 # Phase 1 LR: Higher for head training
+  finetune_lr: 2e-5 # Phase 2 LR: Lower for full model fine-tuning
+  min_lr: 1e-7
+  patience: 10
+  fold: 0
+  optimizer: adamw
+  scheduler: cosine
+  loss: focal # Optimal for imbalance
+  accumulate_grad_batches: 4 # Effective batch size = 32 (8*4)
+  monitor: val_loss
+  use_cosine_decay: true
+  use_swa: true # Improves generalization
+  swa_start_epoch: 30 # Start averaging near end of fine-tuning
+  huber_delta: 0.5
+  label_smoothing: 0.0 # Focal loss handles smoothing naturally
+  use_mixed_precision: false # B5 + BenGraham requires Float32 for stability

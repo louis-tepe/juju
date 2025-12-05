@@ -46,7 +46,8 @@ class QWKCallback(keras.callbacks.Callback):
         logs = logs or {}
         
         # Predict in batches to avoid memory issues
-        batch_size = 32
+        # Use very small batch size for B5 + Float32 to prevent OOM
+        batch_size = 2
         val_preds = []
         for i in range(0, len(self.val_images), batch_size):
             batch = self.val_images[i:i+batch_size]
@@ -70,7 +71,19 @@ class QWKCallback(keras.callbacks.Callback):
 
         qwk = quadratic_weighted_kappa(self.val_labels, val_preds_rounded)
 
-        print(f"\nEpoch {epoch+1}: val_qwk: {qwk:.4f}")
+        # Diagnostic: show prediction distribution to detect issues
+        pred_dist = np.bincount(val_preds_rounded, minlength=5)
+        
+        if self.is_regression:
+            pred_mean = np.mean(val_preds_raw)
+            pred_std = np.std(val_preds_raw)
+            print(f"\nEpoch {epoch+1}: val_qwk: {qwk:.4f} | pred_mean: {pred_mean:.2f} | pred_std: {pred_std:.2f}")
+        else:
+            # For classification, show confidence stats
+            max_probs = np.max(val_preds_raw, axis=-1)
+            print(f"\nEpoch {epoch+1}: val_qwk: {qwk:.4f} | mean_conf: {np.mean(max_probs):.2f} | min_conf: {np.min(max_probs):.2f}")
+        
+        print(f"Prediction distribution: {pred_dist} | True: {np.bincount(self.val_labels, minlength=5)}")
         logs["val_qwk"] = qwk
 
 

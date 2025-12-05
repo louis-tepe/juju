@@ -24,6 +24,11 @@ inference:
 inference-fast:
 	poetry run python -m src.inference --tta 1
 
+submit:
+	@echo "🚀 Creating submission with TTA..."
+	poetry run python -m src.inference --tta 8 --output submission.csv
+	@echo "✅ Submission saved to submission.csv"
+
 optimize:
 	poetry run python scripts/optimize_thresholds.py
 

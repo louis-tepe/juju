@@ -101,10 +101,10 @@ def main():
     parser.add_argument("--test_images", type=str, default="data/test_images", help="Path to test images dir")
     parser.add_argument("--thresholds", type=str, default="thresholds.json", help="Path to thresholds JSON")
     parser.add_argument("--output", type=str, default="submission.csv", help="Output submission file")
-    parser.add_argument("--image_size", type=int, default=380, help="Image size")
+    parser.add_argument("--image_size", type=int, default=512, help="Image size (must match training)")
     parser.add_argument("--tta", type=int, default=8, help="Number of TTA augmentations (1=no TTA)")
     parser.add_argument("--use_ben_graham", action="store_true", default=True, help="Use Ben Graham preprocessing")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for inference")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
     args = parser.parse_args()
     
     print(f"Loading model from {args.model}...")
