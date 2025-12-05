@@ -37,11 +37,24 @@ class KappaLoss(tf.keras.losses.Loss):
 
         return tf.reduce_mean(tf.square(y_true - y_pred))
 
-def get_loss(name):
-    if name == 'huber':
-        return tf.keras.losses.Huber(delta=1.0)
+def get_loss(name, **kwargs):
+    """
+    Get loss function by name.
+    
+    Args:
+        name: Loss name ('huber', 'smooth_l1', 'mse', 'kappa', 'crossentropy')
+        **kwargs: Additional arguments (e.g., delta for Huber loss)
+    """
+    delta = kwargs.get('delta', 0.5)  # Default delta=0.5 for regression
+    
+    if name == 'huber' or name == 'smooth_l1':
+        # Huber loss (Smooth L1) - robust to outliers
+        # Top APTOS solutions found this better than MSE for mislabeled samples
+        return tf.keras.losses.Huber(delta=delta)
     elif name == 'mse':
         return tf.keras.losses.MeanSquaredError()
+    elif name == 'mae':
+        return tf.keras.losses.MeanAbsoluteError()
     elif name == 'kappa':
         return KappaLoss()
     elif name == 'crossentropy':

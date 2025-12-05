@@ -1,31 +1,40 @@
 # @package _global_
 # Mode Test : Optimized for MacBook Pro M2 (16GB RAM)
-# Two-phase training: Head warmup → Full fine-tuning
+# QWK Maximization: High resolution + Strong Augmentations + Huber Loss + Regression head
 
 defaults:
   - override /model: efficientnet
 
-# Data settings (M2 optimized)
+# Data settings (QWK optimized)
 data:
-  image_size: 224
-  batch_size: 64
-  use_ben_graham: false
-  use_native_augment: true
-  use_cache: true
+  image_size: 380 # Higher resolution for retinal details
+  batch_size: 16 # Reduced for larger images on M2 16GB
+  use_ben_graham: true
+  use_native_augment: false # Disabled - using Albumentations instead
+  use_strong_augment: true # Enable Albumentations-based augmentations
+  use_cache: false # Disable cache for larger images
+  use_mixup: false # Disabled for regression mode
 
 # Model
 model:
   backbone: "efficientnet_b0"
-  dropout: 0.3
+  dropout: 0.4 # Increased dropout for regularization
+  output_type: "regression" # For threshold optimization
 
-# Two-phase training
+# QWK-optimized training (based on top APTOS 2019 solutions)
 train:
-  epochs: 10
-  warmup_epochs: 3 # Phase 1: head only (frozen backbone)
-  lr: 1e-3 # Phase 1 LR
-  finetune_lr: 1e-4 # Phase 2 LR (10x lower)
-  patience: 5 # More patience for fine-tuning
+  epochs: 3 # TEMP: Fast check
+  warmup_epochs: 1 # TEMP: Fast check
+  lr: 2e-4 # Standard LR from top solutions (was 3e-4)
+  finetune_lr: 2e-5 # 10x lower for fine-tuning
+  patience: 7 # Reduced for faster feedback (was 10)
+  huber_delta: 0.5 # Huber loss delta - more robust to outliers
+  label_smoothing: 0.0 # Not used with regression
   fold: 0
   use_mixed_precision: false
   use_xla: false
-  min_lr: 1e-6
+  force_cpu: false
+  min_lr: 1e-7
+  use_cosine_decay: true # Cosine annealing
+  use_tta: true # Test-time augmentation
+  tta_augments: 8

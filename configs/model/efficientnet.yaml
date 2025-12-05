@@ -4,4 +4,6 @@ pretrained: true
 num_classes: 5
 dropout: 0.2
 head: "gem" # Generalized Mean Pooling
-use_ordinal: false # If true, output 5 units (ordinal regression), else 1 (regression) or 5 (softmax)
+use_ordinal: false # Legacy: If true, output 5 units (ordinal regression)
+output_type: "softmax" # "softmax" for classification, "regression" for threshold optimization
+constrain_regression: true # If true and regression mode, use sigmoid*4 to constrain output to [0, 4]

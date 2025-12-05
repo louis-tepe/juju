@@ -1,6 +1,6 @@
 # @package _global_
 # Mode Production : Optimized for Powerful Desktop (High VRAM GPU)
-# Goal: Maximize performance, train all folds, ensemble
+# Goal: Maximize QWK through regression + threshold optimization
 
 defaults:
   - override /model: efficientnet
@@ -11,17 +11,28 @@ data:
   batch_size: 16 # Balanced for 12GB VRAM (Float16) + 512px
   num_workers: 12 # Utilize 32GB RAM & Multi-core CPU
   use_tfrecords: true # Enable Offline Pipeline for Prod
+  use_strong_augment: true # Use Albumentations augmentations
 
-# Model: Use heavier backbone
+# Model: Use heavier backbone with regression output
 model:
   backbone: "efficientnet_b4" # Stronger backbone (B5 might OOM on 12GB)
   dropout: 0.4 # More regularization
+  output_type: "regression" # Regression for threshold optimization
+  constrain_regression: true # Sigmoid*4 to constrain output [0,4]
 
-# Training for max performance
+# Training for max QWK performance
 train:
-  epochs: 30 # More epochs for convergence
+  epochs: 40 # More epochs for better convergence with SWA
+  warmup_epochs: 5 # Longer warmup for stable head training
   lr: 1e-4 # Standard LR
+  finetune_lr: 1e-5 # 10x lower for fine-tuning
   min_lr: 1e-7 # Lower floor
-  patience: 7 # More patience
+  patience: 10 # More patience for SWA
   fold: 0 # Can be overridden per run for full CV
   accumulate_grad_batches: 2 # Effective batch size = 32 (16*2)
+  use_cosine_decay: true # Smoother LR schedule
+  use_swa: true # Enable Stochastic Weight Averaging
+  swa_start_epoch: 30 # Start SWA at 75% of training
+  huber_delta: 0.5 # Huber loss delta (robust to outliers)
+  label_smoothing: 0.1 # For classification fallback
+

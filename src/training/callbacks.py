@@ -9,10 +9,13 @@ class QWKCallback(keras.callbacks.Callback):
     Custom callback to compute Quadratic Weighted Kappa on Validation set
     at the end of each epoch.
     
+    Supports both regression (single neuron) and classification (softmax) outputs.
     Pre-extracts validation data to avoid dataset exhaustion issues.
     """
-    def __init__(self, validation_data):
+    def __init__(self, validation_data, is_regression=False):
         super().__init__()
+        self.is_regression = is_regression
+        
         # Pre-extract all validation data once to avoid dataset exhaustion
         print("QWKCallback: Pre-extracting validation data...")
         self.val_images = []
@@ -24,11 +27,20 @@ class QWKCallback(keras.callbacks.Callback):
         self.val_images = np.concatenate(self.val_images, axis=0)
         self.val_labels = np.concatenate(self.val_labels, axis=0)
         
-        # Convert one-hot to class indices
-        if len(self.val_labels.shape) > 1 and self.val_labels.shape[-1] > 1:
-            self.val_labels = np.argmax(self.val_labels, axis=-1)
+        # Convert labels to class indices
+        if is_regression:
+            # Regression mode: labels are already scalar (0.0-4.0), just convert to int
+            self.val_labels = np.rint(self.val_labels).astype(np.int64)
+        elif len(self.val_labels.shape) > 1 and self.val_labels.shape[-1] > 1:
+            # Classification mode: one-hot encoded, convert to class indices
+            self.val_labels = np.argmax(self.val_labels, axis=-1).astype(np.int64)
+        else:
+            # Fallback: ensure int type
+            self.val_labels = self.val_labels.astype(np.int64)
         
         print(f"QWKCallback: Loaded {len(self.val_labels)} validation samples")
+        print(f"QWKCallback: Mode = {'REGRESSION' if is_regression else 'CLASSIFICATION'}")
+        print(f"QWKCallback: Label distribution = {np.bincount(self.val_labels, minlength=5)}")
 
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
@@ -43,10 +55,16 @@ class QWKCallback(keras.callbacks.Callback):
         
         val_preds_raw = np.concatenate(val_preds, axis=0)
 
-        # Convert predictions to class indices
-        if len(val_preds_raw.shape) > 1 and val_preds_raw.shape[-1] > 1:
+        # Convert predictions to class indices based on output type
+        if self.is_regression:
+            # Regression: round and clip to valid class range
+            val_preds_rounded = np.rint(val_preds_raw.flatten()).astype(int)
+            val_preds_rounded = np.clip(val_preds_rounded, 0, 4)
+        elif len(val_preds_raw.shape) > 1 and val_preds_raw.shape[-1] > 1:
+            # Classification: argmax
             val_preds_rounded = np.argmax(val_preds_raw, axis=-1)
         else:
+            # Fallback: round
             val_preds_rounded = np.rint(val_preds_raw).astype(int)
             val_preds_rounded = np.clip(val_preds_rounded, 0, 4)
 

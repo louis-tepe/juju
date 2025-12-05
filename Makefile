@@ -19,7 +19,10 @@ train-prod:
 	poetry run python -m src.train experiment=production
 
 inference:
-	poetry run python submission.py
+	poetry run python -m src.inference --tta 8
+
+inference-fast:
+	poetry run python -m src.inference --tta 1
 
 optimize:
 	poetry run python scripts/optimize_thresholds.py

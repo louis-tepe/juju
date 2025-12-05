@@ -46,3 +46,24 @@ class GeMPooling2D(keras.layers.Layer):
             "train_p": self.train_p
         })
         return config
+
+
+@keras.saving.register_keras_serializable()
+class ScaleLayer(keras.layers.Layer):
+    """
+    Simple scaling layer that multiplies input by a constant factor.
+    Used for constrained regression output: sigmoid * scale → output in [0, scale].
+    
+    This is a serializable replacement for Lambda(lambda x: x * scale).
+    """
+    def __init__(self, scale=4.0, **kwargs):
+        super().__init__(**kwargs)
+        self.scale = scale
+
+    def call(self, inputs):
+        return inputs * self.scale
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({"scale": self.scale})
+        return config

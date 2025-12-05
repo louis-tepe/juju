@@ -1,6 +1,6 @@
 import keras
 
-from src.models.layers import GeMPooling2D
+from src.models.layers import GeMPooling2D, ScaleLayer
 
 
 def get_backbone(name, input_shape, pretrained=True):
@@ -56,12 +56,25 @@ def create_model(config):
     if config.model.dropout > 0:
         x = keras.layers.Dropout(config.model.dropout)(x)
 
-    # Head
+    # Head: support multiple output types
+    output_type = getattr(config.model, 'output_type', 'softmax')
+    constrain_regression = getattr(config.model, 'constrain_regression', True)
+    
     if config.model.use_ordinal:
-        # Ordinal Regression
+        # Legacy: Ordinal Regression (5 sigmoid units)
         outputs = keras.layers.Dense(config.model.num_classes, activation='sigmoid', name='output')(x)
+    elif output_type == 'regression':
+        if constrain_regression:
+            # Constrained regression: sigmoid * 4 → output in [0, 4]
+            # This helps the model converge faster and prevents extreme predictions
+            # Using ScaleLayer instead of Lambda for serialization compatibility
+            x = keras.layers.Dense(1, activation='sigmoid', name='pre_output')(x)
+            outputs = ScaleLayer(scale=4.0, name='output')(x)
+        else:
+            # Unconstrained regression: linear output
+            outputs = keras.layers.Dense(1, activation='linear', name='output')(x)
     else:
-        # Classification (Softmax)
+        # Classification: Softmax (default)
         outputs = keras.layers.Dense(config.model.num_classes, activation='softmax', name='output')(x)
 
     model = keras.Model(inputs, outputs)
