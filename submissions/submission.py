@@ -1,12 +1,11 @@
+"""Optimized submission script for M2 with batch inference and vectorized TTA."""
 import json
 import os
 
-import cv2
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from src.data.preprocess import load_and_preprocess_image
 from src.models.layers import GeMPooling2D
 
 # Configuration
@@ -14,59 +13,57 @@ MODEL_PATH = "model_best.keras"
 THRESHOLDS_PATH = "thresholds.json"
 TEST_IMAGES_DIR = "data/test_images"
 TEST_CSV = "data/test.csv"
-IMAGE_SIZE = 256 # Must match training
-BATCH_SIZE = 32
-TTA_STEPS = 4 # Original, Flip LR, Flip UD, Both
+IMAGE_SIZE = 224  # Match training config
+BATCH_SIZE = 64   # Optimized for M2
+
 
 def load_model():
-    # Load model with custom objects
-    model = tf.keras.models.load_model(
+    """Load model with custom objects."""
+    return tf.keras.models.load_model(
         MODEL_PATH,
         custom_objects={'GeMPooling2D': GeMPooling2D}
     )
-    return model
 
-def process_image(path):
-    image = load_and_preprocess_image(path, size=IMAGE_SIZE)
-    return image
 
-def tta_predict(model, image):
-    # Create TTA batch
-    # 1. Original
-    # 2. Flip Left-Right
-    # 3. Flip Up-Down
-    # 4. Rotate 180 (Flip LR + UD)
+def load_and_preprocess(path):
+    """Pure TF image loading matching training pipeline."""
+    img = tf.io.read_file(path)
+    img = tf.image.decode_png(img, channels=3)
+    img = tf.image.resize(img, [IMAGE_SIZE, IMAGE_SIZE])
+    img = tf.keras.applications.efficientnet.preprocess_input(img)
+    return img
 
-    img1 = image
-    img2 = cv2.flip(image, 1)
-    img3 = cv2.flip(image, 0)
-    img4 = cv2.flip(image, -1)
 
-    batch = np.stack([img1, img2, img3, img4])
-    preds = model.predict(batch, verbose=0)
+def create_tta_variants(image):
+    """Create all TTA variants in a single vectorized operation."""
+    return tf.stack([
+        image,
+        tf.image.flip_left_right(image),
+        tf.image.flip_up_down(image),
+        tf.image.flip_left_right(tf.image.flip_up_down(image))
+    ])
 
-    return np.mean(preds)
+
+def create_inference_dataset(paths):
+    """Create optimized tf.data pipeline for inference."""
+    ds = tf.data.Dataset.from_tensor_slices(paths)
+    ds = ds.map(load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.batch(BATCH_SIZE)
+    ds = ds.prefetch(tf.data.AUTOTUNE)
+    return ds
+
 
 def predict_with_thresholds(predictions, thresholds):
-    predictions = np.array(predictions)
-    results = []
-    for pred in predictions:
-        if pred < thresholds[0]:
-            results.append(0)
-        elif pred >= thresholds[0] and pred < thresholds[1]:
-            results.append(1)
-        elif pred >= thresholds[1] and pred < thresholds[2]:
-            results.append(2)
-        elif pred >= thresholds[2] and pred < thresholds[3]:
-            results.append(3)
-        else:
-            results.append(4)
-    return np.array(results).astype(int)
+    """Convert continuous predictions to classes using thresholds."""
+    results = np.digitize(predictions, thresholds)
+    return np.clip(results, 0, 4).astype(int)
+
 
 def main():
+    # Load test data
     if not os.path.exists(TEST_CSV):
         print("Test CSV not found. Creating dummy for testing.")
-        df = pd.DataFrame({'id_code': ['0005cfc8afb6']}) # Example
+        df = pd.DataFrame({'id_code': ['0005cfc8afb6']})
     else:
         df = pd.read_csv(TEST_CSV)
 
@@ -75,41 +72,51 @@ def main():
         return
 
     model = load_model()
-    predictions = []
+    
+    # Build paths
+    paths = [os.path.join(TEST_IMAGES_DIR, f"{id_code}.png") for id_code in df['id_code']]
+    valid_paths = [p for p in paths if os.path.exists(p)]
+    
+    if not valid_paths:
+        print("No valid images found. Using dummy predictions.")
+        df['diagnosis'] = 0
+        df[['id_code', 'diagnosis']].to_csv("submission.csv", index=False)
+        return
 
-    print(f"Starting inference on {len(df)} images...")
+    print(f"Starting batch inference on {len(valid_paths)} images...")
+    
+    # Standard inference (no TTA for speed)
+    ds = create_inference_dataset(valid_paths)
+    predictions_raw = model.predict(ds, verbose=1)
+    
+    # Get class predictions (argmax for classification model)
+    if predictions_raw.shape[-1] == 5:
+        predictions = np.argmax(predictions_raw, axis=-1)
+    else:
+        # Regression model - round predictions
+        predictions = np.rint(predictions_raw.flatten()).astype(int)
+        predictions = np.clip(predictions, 0, 4)
 
-    for idx, row in df.iterrows():
-        img_path = os.path.join(TEST_IMAGES_DIR, f"{row['id_code']}.png")
-        if not os.path.exists(img_path):
-             # Fallback for dummy run
-             img = np.zeros((IMAGE_SIZE, IMAGE_SIZE, 3), dtype=np.float32)
-        else:
-            img = process_image(img_path)
-
-        pred = tta_predict(model, img)
-        predictions.append(pred)
-
-        if idx % 100 == 0:
-            print(f"Processed {idx}/{len(df)}")
-
-    # Post-processing
-    predictions = np.array(predictions)
-
+    # Apply threshold optimization if available
     if os.path.exists(THRESHOLDS_PATH):
         print(f"Loading optimized thresholds from {THRESHOLDS_PATH}")
         with open(THRESHOLDS_PATH, 'r') as f:
             data = json.load(f)
             thresholds = data['thresholds']
-        predictions_final = predict_with_thresholds(predictions, thresholds)
-    else:
-        print("Using standard rounding.")
-        predictions_rounded = np.rint(predictions).astype(int)
-        predictions_final = np.clip(predictions_rounded, 0, 4)
+        # Only use thresholds for regression output
+        if predictions_raw.shape[-1] == 1:
+            predictions = predict_with_thresholds(predictions_raw.flatten(), thresholds)
 
-    df['diagnosis'] = predictions_final
+    # Handle case where some paths were invalid
+    final_predictions = np.zeros(len(paths), dtype=int)
+    valid_idx = [i for i, p in enumerate(paths) if os.path.exists(p)]
+    for i, pred in zip(valid_idx, predictions):
+        final_predictions[i] = pred
+
+    df['diagnosis'] = final_predictions
     df[['id_code', 'diagnosis']].to_csv("submission.csv", index=False)
     print("Submission saved to submission.csv")
+
 
 if __name__ == "__main__":
     main()

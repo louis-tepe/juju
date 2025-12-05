@@ -26,8 +26,8 @@ def test_model_creation(config):
     input_shape = (1, 256, 256, 3)
     output = model(tf.random.normal(input_shape))
 
-    # Regression output should be (1, 1)
-    assert output.shape == (1, 1)
+    # Classification output: 5 classes (softmax)
+    assert output.shape == (1, 5)
 
 def test_gem_pooling():
     from src.models.layers import GeMPooling2D

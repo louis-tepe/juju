@@ -11,96 +11,62 @@ from src.data.preprocess import load_and_preprocess_image
 
 
 class DataLoader:
+    """Optimized DataLoader for M2 unified memory architecture."""
+    
     def __init__(self, config):
         self.config = config
         self.autotune = tf.data.AUTOTUNE
 
-    def get_augmentations(self):
-        return A.Compose([
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.5),
-            A.RandomRotate90(p=0.5),
-            A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=0.5),
-            A.RandomBrightnessContrast(p=0.2),
-            A.HueSaturationValue(p=0.2),
-        ])
-
-    def _process_path(self, path, label, size, use_ben_graham):
-        """Load and preprocess a single image."""
-        def _read_img(path_b, size_b, use_bg_b):
-            path_str = path_b.decode("utf-8")
-            size_int = int(size_b)
-            use_bg_bool = bool(use_bg_b)
-
-            try:
-                if use_bg_bool:
-                    img = load_and_preprocess_image(path_str, size=size_int)
-                else:
-                    import cv2
-                    img = cv2.imread(path_str)
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    img = cv2.resize(img, (size_int, size_int))
-                    img = img.astype(np.float32) / 255.0
-                
-                img = img.astype(np.float32)
-                return img
-            except Exception as e:
-                print(f"Error processing {path_str}: {e}")
-                return np.zeros((size_int, size_int, 3), dtype=np.float32)
-
-        img = tf.numpy_function(
-            _read_img,
-            [path, size, use_ben_graham],
-            tf.float32
-        )
-        img.set_shape([size, size, 3])
+    def _load_image(self, path, label):
+        """Load and resize image WITHOUT normalization (for augmentation)."""
+        img = tf.io.read_file(path)
+        img = tf.image.decode_png(img, channels=3)
+        img = tf.image.resize(img, [self.config.data.image_size, self.config.data.image_size])
+        # Keep as float32 [0, 255] for augmentation
         return img, label
 
-    def _augment_image(self, image, label):
-        """Albumentations-based augmentation (slower, more flexible)."""
-        def _aug_fn(img):
-            aug = self.get_augmentations()
-            data = aug(image=img)
-            return data['image']
-
-        aug_img = tf.numpy_function(func=_aug_fn, inp=[image], Tout=tf.float32)
-        aug_img.set_shape([self.config.data.image_size, self.config.data.image_size, 3])
-        return aug_img, label
-
     def _augment_image_native(self, image, label):
-        """TF-Native augmentations (faster, GPU-friendly)."""
+        """Safe geometric augmentations for medical/retinal images."""
+        # Geometric transforms only - safe for medical imaging
         image = tf.image.random_flip_left_right(image)
         image = tf.image.random_flip_up_down(image)
-        image = tf.image.random_brightness(image, max_delta=0.1)
-        image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
         k = tf.random.uniform([], 0, 4, dtype=tf.int32)
         image = tf.image.rot90(image, k=k)
-        image = tf.clip_by_value(image, 0.0, 1.0)
+        return image, label
+
+    def _normalize_image(self, image, label):
+        """Apply EfficientNet normalization AFTER augmentation."""
+        image = tf.keras.applications.efficientnet.preprocess_input(image)
         return image, label
 
     def build_dataset(self, df: pd.DataFrame, training: bool = True):
-        """Builds a tf.data.Dataset from a pandas DataFrame."""
+        """Builds optimized tf.data.Dataset for M2."""
         paths = df['path'].values
         labels = df['diagnosis'].values.astype(np.int32)
         labels = tf.one_hot(labels, depth=5)
 
         dataset = tf.data.Dataset.from_tensor_slices((paths, labels))
 
-        process_fn = partial(
-            self._process_path,
-            size=self.config.data.image_size,
-            use_ben_graham=self.config.data.use_ben_graham
-        )
-
-        dataset = dataset.map(process_fn, num_parallel_calls=4)
-        
+        # Shuffle before mapping for training
         if training:
-            use_native = hasattr(self.config.data, 'use_native_augment') and self.config.data.use_native_augment
-            if use_native:
-                dataset = dataset.map(self._augment_image_native, num_parallel_calls=4)
-            else:
-                dataset = dataset.map(self._augment_image, num_parallel_calls=4)
+            dataset = dataset.shuffle(buffer_size=min(1000, len(paths)), reshuffle_each_iteration=True)
 
+        # Load images (no normalization yet)
+        dataset = dataset.map(self._load_image, num_parallel_calls=self.autotune)
+        
+        # Cache raw images (before augmentation for variety)
+        use_cache = getattr(self.config.data, 'use_cache', True)
+        if use_cache and self.config.data.image_size <= 256:
+            dataset = dataset.cache()
+        
+        # Augmentation on raw [0, 255] images (training only)
+        if training:
+            dataset = dataset.map(self._augment_image_native, num_parallel_calls=self.autotune)
+
+        # Normalize AFTER augmentation
+        dataset = dataset.map(self._normalize_image, num_parallel_calls=self.autotune)
+
+        # Batch and prefetch
         dataset = dataset.batch(self.config.data.batch_size)
         dataset = dataset.prefetch(self.autotune)
 

@@ -37,6 +37,11 @@ def create_model(config):
     input_shape = (config.data.image_size, config.data.image_size, 3)
 
     backbone = get_backbone(config.model.backbone, input_shape, config.model.pretrained)
+    
+    # Freeze backbone if specified (prevents destroying pretrained weights)
+    freeze_backbone = getattr(config.model, 'freeze_backbone', False)
+    if freeze_backbone:
+        backbone.trainable = False
 
     inputs = keras.Input(shape=input_shape)
     x = backbone(inputs)

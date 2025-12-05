@@ -85,15 +85,12 @@ class Trainer:
         # Calculate Class Weights
         from sklearn.utils import class_weight
 
-        # Get labels from train_ds (iterate once - might be slow but needed)
-        # Or better, read from CSV directly for speed
         train_df_path = hydra.utils.to_absolute_path(self.config.data.train_folds_csv)
         if not os.path.exists(train_df_path):
              train_df_path = hydra.utils.to_absolute_path(self.config.data.train_csv)
 
         df = pd.read_csv(train_df_path)
         
-        # Filter for class weights calculation
         if 'fold' in df.columns:
             df_train = df[df['fold'] != self.config.train.fold]
         else:
@@ -109,13 +106,102 @@ class Trainer:
         class_weights = dict(enumerate(class_weights_vals))
         print(f"Class Weights: {class_weights}")
 
-        # Train
-        history = self.model.fit(
+        # Two-phase training configuration
+        warmup_epochs = getattr(self.config.train, 'warmup_epochs', 3)
+        total_epochs = self.config.train.epochs
+        finetune_lr = getattr(self.config.train, 'finetune_lr', self.config.train.lr * 0.1)
+        
+        # Get backbone layer (layer index 1 after Input)
+        backbone = self.model.layers[1]
+        
+        # ============ PHASE 1: Head Warmup (Frozen Backbone) ============
+        print(f"\n{'='*50}")
+        print(f"PHASE 1: Head Warmup ({warmup_epochs} epochs) - Backbone FROZEN")
+        print(f"{'='*50}")
+        
+        backbone.trainable = False
+        self.model.compile(
+            optimizer=keras.optimizers.AdamW(learning_rate=self.config.train.lr),
+            loss=loss_fn,
+            metrics=['accuracy']
+        )
+        
+        # Callbacks without early stopping for warmup
+        warmup_callbacks = [
+            QWKCallback(val_ds),
+            keras.callbacks.ModelCheckpoint(
+                filepath=os.path.join(os.getcwd(), "model_best.keras"),
+                monitor="val_qwk",
+                mode="max",
+                save_best_only=True,
+                verbose=1
+            ),
+            LRLogger()
+        ]
+        
+        history1 = self.model.fit(
             train_ds,
             validation_data=val_ds,
-            epochs=self.config.train.epochs,
-            callbacks=callbacks
+            epochs=warmup_epochs,
+            callbacks=warmup_callbacks,
+            class_weight=class_weights
         )
+        
+        # ============ PHASE 2: Full Fine-tuning (Unfrozen) ============
+        finetune_epochs = total_epochs - warmup_epochs
+        if finetune_epochs > 0:
+            print(f"\n{'='*50}")
+            print(f"PHASE 2: Fine-tuning ({finetune_epochs} epochs) - Backbone UNFROZEN")
+            print(f"LR: {finetune_lr:.2e} (10x lower)")
+            print(f"{'='*50}")
+            
+            backbone.trainable = True
+            self.model.compile(
+                optimizer=keras.optimizers.AdamW(learning_rate=finetune_lr),
+                loss=loss_fn,
+                metrics=['accuracy']
+            )
+            
+            # Full callbacks with early stopping
+            finetune_callbacks = [
+                QWKCallback(val_ds),
+                keras.callbacks.ModelCheckpoint(
+                    filepath=os.path.join(os.getcwd(), "model_best.keras"),
+                    monitor="val_qwk",
+                    mode="max",
+                    save_best_only=True,
+                    verbose=1
+                ),
+                keras.callbacks.ReduceLROnPlateau(
+                    monitor="val_loss",
+                    factor=0.5,
+                    patience=2,
+                    min_lr=self.config.train.min_lr,
+                    verbose=1
+                ),
+                keras.callbacks.EarlyStopping(
+                    monitor="val_qwk",
+                    mode="max",
+                    patience=self.config.train.patience,
+                    restore_best_weights=True,
+                    verbose=1
+                ),
+                LRLogger()
+            ]
+            
+            history2 = self.model.fit(
+                train_ds,
+                validation_data=val_ds,
+                epochs=finetune_epochs,
+                callbacks=finetune_callbacks,
+                class_weight=class_weights
+            )
+            
+            # Merge histories for plotting
+            for key in history1.history:
+                history1.history[key].extend(history2.history.get(key, []))
+        
+        history = history1
 
         # Plot Metrics
         self.plot_metrics(history)
