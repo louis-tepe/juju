@@ -293,38 +293,44 @@ class Trainer:
         # Save OOF Predictions
         print("Generating OOF predictions...")
         val_labels = []
-        val_preds_raw = []
+        val_preds_proba = []  # Full probability distributions
 
-        # Iterate to get labels and images
+        # Iterate to get labels and predictions
         for images, labels in val_ds:
             preds = self.model.predict(images, verbose=0)
             
-            # Labels: scalar for regression, one-hot for classification
             if is_regression:
                 val_labels.extend(labels.numpy().astype(int))
-                val_preds_raw.extend(preds.flatten())
+                val_preds_proba.extend(preds.flatten())
             else:
                 val_labels.extend(np.argmax(labels.numpy(), axis=-1))
-                val_preds_raw.extend(np.argmax(preds, axis=-1))
+                val_preds_proba.extend(preds)  # Keep full probability vector
 
         val_labels = np.array(val_labels)
-        val_preds_raw = np.array(val_preds_raw)
+        val_preds_proba = np.array(val_preds_proba)
         
-        # Save raw predictions for threshold optimization
-        oof_df = pd.DataFrame({
-            'y_true': val_labels,
-            'y_pred': val_preds_raw
-        })
+        # Build OOF dataframe
+        if is_regression:
+            oof_df = pd.DataFrame({
+                'diagnosis': val_labels,
+                'pred_raw': val_preds_proba
+            })
+            val_preds_class = np.clip(np.rint(val_preds_proba), 0, 4).astype(int)
+        else:
+            # Save probabilities for each class (for threshold optimization)
+            oof_df = pd.DataFrame({
+                'diagnosis': val_labels,
+                'pred_class': np.argmax(val_preds_proba, axis=-1)
+            })
+            for i in range(5):
+                oof_df[f'prob_{i}'] = val_preds_proba[:, i]
+            val_preds_class = np.argmax(val_preds_proba, axis=-1)
+        
         oof_df.to_csv("oof.csv", index=False)
         print("Saved OOF predictions to oof.csv")
 
-        # Compute baseline QWK (simple rounding for regression, direct for classification)
-        if is_regression:
-            val_preds_baseline = np.clip(np.rint(val_preds_raw), 0, 4).astype(int)
-        else:
-            val_preds_baseline = val_preds_raw.astype(int)
-        
-        baseline_qwk = cohen_kappa_score(val_labels, val_preds_baseline, weights='quadratic')
+        # Compute baseline QWK
+        baseline_qwk = cohen_kappa_score(val_labels, val_preds_class, weights='quadratic')
         print(f"\n📊 Baseline QWK (simple rounding): {baseline_qwk:.4f}")
         
         # Threshold optimization (for regression mode)
@@ -392,7 +398,7 @@ class Trainer:
             # Use optimized predictions for confusion matrix
             val_preds_final = val_preds_opt
         else:
-            val_preds_final = val_preds_baseline
+            val_preds_final = val_preds_class
 
         # Plot Confusion Matrix
         self.plot_confusion_matrix(val_labels, val_preds_final)

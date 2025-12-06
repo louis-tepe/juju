@@ -1,4 +1,4 @@
-.PHONY: install folds train experiment inference clean lint test docker-build
+.PHONY: install folds train experiment inference clean lint test docker-build train-cv ensemble submit-final
 
 install:
 	poetry install
@@ -18,6 +18,24 @@ train-test:
 train-prod:
 	poetry run python -m src.train experiment=production
 
+# ==================== PRODUCTION PIPELINE ====================
+
+train-cv:
+	@echo "🚀 Starting 5-Fold Cross-Validation Training..."
+	@echo "⏱️  Estimated time: 10-15 hours"
+	poetry run python scripts/train_all_folds.py
+
+ensemble:
+	@echo "🔗 Generating ensemble predictions with optimized thresholds..."
+	poetry run python scripts/ensemble_predictions.py
+
+submit-final:
+	@echo "🏆 Full Production Pipeline: Ensemble + Optimized Thresholds"
+	poetry run python scripts/ensemble_predictions.py --test
+	@echo "✅ Final submission saved to submission.csv"
+
+# ==================== SINGLE FOLD COMMANDS ====================
+
 inference:
 	poetry run python -m src.inference --tta 8
 
@@ -32,6 +50,8 @@ submit:
 optimize:
 	poetry run python scripts/optimize_thresholds.py
 
+# ==================== DEV TOOLS ====================
+
 lint:
 	poetry run ruff check .
 	poetry run ruff format .
@@ -45,3 +65,4 @@ docker-build:
 
 clean:
 	rm -rf outputs/ multirun/ __pycache__/ .pytest_cache/ data/processed/tfrecords_*
+

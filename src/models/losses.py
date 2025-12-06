@@ -1,6 +1,8 @@
 import tensorflow as tf
+import keras
 
 
+@keras.saving.register_keras_serializable()
 class KappaLoss(tf.keras.losses.Loss):
     """
     A differentiable approximation of the Quadratic Weighted Kappa.
@@ -38,14 +40,15 @@ class KappaLoss(tf.keras.losses.Loss):
         return tf.reduce_mean(tf.square(y_true - y_pred))
 
 
+@keras.saving.register_keras_serializable(name="CategoricalFocalCrossentropy")
 class CategoricalFocalCrossentropy(tf.keras.losses.Loss):
     """
     Categorical Focal Crossentropy Loss.
     References:
         - [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002)
     """
-    def __init__(self, alpha=0.25, gamma=2.0, from_logits=False, label_smoothing=0.0, name='focal_loss'):
-        super().__init__(name=name)
+    def __init__(self, alpha=0.25, gamma=2.0, from_logits=False, label_smoothing=0.0, name='focal_loss', **kwargs):
+        super().__init__(name=name, **kwargs)
         self.alpha = alpha
         self.gamma = gamma
         self.from_logits = from_logits
