@@ -35,8 +35,3 @@ multirun/
 
 # WandB
 wandb/
-
-# OOF
-oof.csv
-thresholds.json
-submission.csv
